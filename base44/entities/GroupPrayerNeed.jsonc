@@ -1,0 +1,27 @@
+{
+  "name": "GroupPrayerNeed",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "description": "References AccountabilityGroup"
+    },
+    "submitted_by": {
+      "type": "string",
+      "description": "User ID of submitter"
+    },
+    "submitted_by_name": {
+      "type": "string",
+      "description": "Display name of submitter"
+    },
+    "content": {
+      "type": "string",
+      "description": "Prayer need text"
+    }
+  },
+  "required": [
+    "group_id",
+    "submitted_by",
+    "content"
+  ]
+}

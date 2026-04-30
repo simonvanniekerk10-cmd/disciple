@@ -1,0 +1,26 @@
+{
+  "name": "AccountabilityGroupMember",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "description": "References AccountabilityGroup"
+    },
+    "user_id": {
+      "type": "string",
+      "description": "References User"
+    },
+    "user_email": {
+      "type": "string",
+      "description": "User email for querying logs"
+    },
+    "user_name": {
+      "type": "string",
+      "description": "Display name at time of joining"
+    }
+  },
+  "required": [
+    "group_id",
+    "user_id"
+  ]
+}

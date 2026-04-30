@@ -1,0 +1,23 @@
+{
+  "name": "AccountabilityGroup",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Group name"
+    },
+    "created_by_user_id": {
+      "type": "string",
+      "description": "User ID of the creator"
+    },
+    "invite_code": {
+      "type": "string",
+      "description": "Short unique invite code"
+    }
+  },
+  "required": [
+    "name",
+    "created_by_user_id",
+    "invite_code"
+  ]
+}

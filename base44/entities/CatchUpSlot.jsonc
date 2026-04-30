@@ -1,0 +1,79 @@
+{
+  "name": "CatchUpSlot",
+  "type": "object",
+  "properties": {
+    "oversight_leader_id": {
+      "type": "string",
+      "description": "ID of the Oversight Leader this slot belongs to"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the slot"
+    },
+    "time": {
+      "type": "string",
+      "description": "Display time (e.g. 9:00 AM)"
+    },
+    "time_raw": {
+      "type": "string",
+      "description": "Raw 24h time for calendar logic (e.g. 09:00)"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "phone",
+        "in_person"
+      ],
+      "description": "Type of catch-up (set at booking time)"
+    },
+    "duration": {
+      "type": "number",
+      "description": "Duration in minutes (30 or 60)"
+    },
+    "location": {
+      "type": "string",
+      "description": "Location or call link"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "available",
+        "booked",
+        "cancelled"
+      ],
+      "default": "available",
+      "description": "Slot status"
+    },
+    "confirmed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the leader has confirmed this booking (pending vs confirmed)"
+    },
+    "message": {
+      "type": "string",
+      "description": "Optional message when booking"
+    },
+    "booked_by": {
+      "type": "string",
+      "description": "Display name of the person who booked"
+    },
+    "booked_by_user_id": {
+      "type": "string",
+      "description": "User ID of the person who booked (for reliable querying)"
+    },
+    "calendar_event_id": {
+      "type": "string",
+      "description": "Google Calendar event ID for deletion on cancel"
+    },
+    "notification_sent": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the booking notification email to the leader has been sent \u2014 prevents duplicates"
+    }
+  },
+  "required": [
+    "date",
+    "time"
+  ]
+}
