@@ -1,11 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { Navigate } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
 import AdminCalendar from "../components/admin/AdminCalendar";
 import PastBookingsLog from "../components/admin/PastBookingsLog";
-import InviteLinkPanel from "../components/admin/InviteLinkPanel";
 import GroupMembers from "../components/admin/GroupMembers";
 import ChallengeBuilder from "../components/admin/ChallengeBuilder";
 import ChallengeDashboard from "../components/admin/ChallengeDashboard";
@@ -23,7 +22,15 @@ export default function AdminPanel() {
 
   const { data: slots = [], isLoading } = useQuery({
     queryKey: ["catchupSlots", user?.id],
-    queryFn: () => base44.entities.CatchUpSlot.filter({ oversight_leader_id: user.id }, "date", 500),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('catch_up_slots')
+        .select('*')
+        .eq('oversight_leader_id', user.id)
+        .order('date', { ascending: true })
+        .limit(500);
+      return data || [];
+    },
     enabled: !!user?.id && isAllowed,
     staleTime: 0,
     gcTime: 0,
@@ -32,39 +39,27 @@ export default function AdminPanel() {
 
   const { data: leaderProfiles = [], isLoading: profileLoading, refetch: refetchProfile } = useQuery({
     queryKey: ["leaderProfile", user?.id],
-    queryFn: () => base44.entities.OversightLeaderProfile.filter({ user_id: user.id }),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('oversight_leader_profiles')
+        .select('*')
+        .eq('user_id', user.id);
+      return data || [];
+    },
     enabled: !!user?.id && isAllowed,
     staleTime: 0,
   });
 
   if (!isAllowed) return <Navigate to="/Home" replace />;
+
   const leaderProfile = leaderProfiles[0] || null;
   const timezoneSet = !!leaderProfile?.timezone;
 
   const handleCancelBooking = async (slot) => {
-    // Delete the slot entirely — it does not return to available
-    await base44.entities.CatchUpSlot.delete(slot.id);
-
-    const leaderName = user?.full_name || 'Your Leader';
-    const userName = slot.booked_by || 'User';
-    const emailBase = {
-      leaderName, userName,
-      date: slot.date, time: slot.time, time_raw: slot.time_raw,
-      type: slot.type, duration: slot.duration,
-      booked_by_user_id: slot.booked_by_user_id,
-      oversight_leader_id: slot.oversight_leader_id || user?.id,
-    };
-    // Email user about cancellation
-    if (slot.booked_by_user_id) {
-      base44.functions.invoke('catchupEmails', { ...emailBase, scenario: 'cancel_user' });
-    }
-    // Self-notify admin
-    base44.functions.invoke('catchupEmails', { ...emailBase, scenario: 'cancel_admin' });
-
+    await supabase.from('catch_up_slots').delete().eq('id', slot.id);
     queryClient.invalidateQueries({ queryKey: ['catchupSlots', user?.id] });
   };
 
-  // Show onboarding if profile is loaded and timezone is not set
   if (!profileLoading && !timezoneSet) {
     return (
       <TimezoneOnboarding
@@ -101,7 +96,6 @@ export default function AdminPanel() {
             onConfirmed={() => queryClient.invalidateQueries({ queryKey: ["catchupSlots", user?.id] })}
           />
           <GroupMembers />
-          <InviteLinkPanel />
           <AdminCalendar slots={slots} />
           <PastBookingsLog slots={slots} leaderTimezone={leaderProfile?.timezone} onCancelBooking={handleCancelBooking} />
           <CalendarSettings leaderProfile={leaderProfile} onSaved={() => queryClient.invalidateQueries({ queryKey: ["leaderProfile", user?.id] })} />
