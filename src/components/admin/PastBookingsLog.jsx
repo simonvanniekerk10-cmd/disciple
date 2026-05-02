@@ -3,10 +3,8 @@ import { format } from "date-fns";
 import { Phone, MapPin, User, MessageSquare, Calendar, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
-import { base44 } from "@/api/base44Client";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { supabase } from "@/lib/supabase";
 
 function toRaw(displayTime) {
   if (!displayTime) return "";
@@ -22,28 +20,28 @@ function toRaw(displayTime) {
 
 export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking }) {
   const [userMap, setUserMap] = useState({});
-
-  useEffect(() => {
-    const userIds = [...new Set(
-      slots
-        .filter((s) => s.booked_by_user_id)
-        .map((s) => s.booked_by_user_id)
-    )];
-    if (userIds.length === 0) return;
-
-    Promise.all(userIds.map((id) => base44.entities.User.filter({ id }))).then((results) => {
-      const map = {};
-      results.forEach((users) => {
-        if (users[0]) map[users[0].id] = users[0].display_name || users[0].full_name || users[0].email;
-      });
-      setUserMap(map);
-    });
-  }, [slots]);
   const [confirmSlot, setConfirmSlot] = useState(null);
   const [cancelling, setCancelling] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
 
-  // Use leader's timezone for "now" so past slots don't appear as upcoming
+  useEffect(() => {
+    const userIds = [...new Set(
+      slots.filter((s) => s.booked_by_user_id).map((s) => s.booked_by_user_id)
+    )];
+    if (userIds.length === 0) return;
+    supabase
+      .from('profiles')
+      .select('id, display_name, full_name, email')
+      .in('id', userIds)
+      .then(({ data }) => {
+        const map = {};
+        (data || []).forEach((u) => {
+          map[u.id] = u.display_name || u.full_name || u.email;
+        });
+        setUserMap(map);
+      });
+  }, [slots]);
+
   const timezone = leaderTimezone || "Australia/Adelaide";
   const nowInTz = new Date(new Date().toLocaleString("en-US", { timeZone: timezone }));
   const todayInTz = format(nowInTz, "yyyy-MM-dd");
@@ -53,7 +51,6 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
       if (!s.booked_by && s.status !== "cancelled") return false;
       if (s.date > todayInTz) return false;
       if (s.date < todayInTz) return true;
-      // Same day: check time
       const raw = s.time_raw || toRaw(s.time);
       if (!raw) return true;
       const [h, m] = raw.split(":").map(Number);
@@ -67,7 +64,6 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
       if (s.status !== "booked" || !s.confirmed) return false;
       if (s.date < todayInTz) return false;
       if (s.date > todayInTz) return true;
-      // Same day: check time
       const raw = s.time_raw || toRaw(s.time);
       if (!raw) return true;
       const [h, m] = raw.split(":").map(Number);
@@ -81,7 +77,7 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
     await onCancelBooking(confirmSlot);
     setConfirmSlot(null);
     setCancelling(false);
-    setSuccessMsg("Catch-up cancelled and Disciple notified.");
+    setSuccessMsg("Catch-up cancelled.");
     setTimeout(() => setSuccessMsg(""), 4000);
   };
 
@@ -100,22 +96,11 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
             {slot.date ? format(new Date(slot.date + "T00:00:00"), "EEE, MMM d, yyyy") : ""} · {slot.time}
           </p>
           <div className="flex items-center gap-2 shrink-0">
-            <Badge
-              className={
-                slot.status === "booked"
-                  ? "bg-primary/10 text-primary text-[10px]"
-                  : "bg-muted text-muted-foreground text-[10px]"
-              }
-            >
+            <Badge className={slot.status === "booked" ? "bg-primary/10 text-primary text-[10px]" : "bg-muted text-muted-foreground text-[10px]"}>
               {slot.status === "booked" ? "Booked" : slot.status}
             </Badge>
             {showCancel && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                onClick={() => setConfirmSlot(slot)}
-              >
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={() => setConfirmSlot(slot)}>
                 <X className="w-3.5 h-3.5" />
               </Button>
             )}
@@ -124,7 +109,6 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
         <p className="text-xs text-muted-foreground">
           {slot.type === "phone" ? "Phone Call" : "In Person"}
           {slot.duration ? ` · ${slot.duration} min` : ""}
-          {slot.location ? ` · ${slot.location}` : ""}
         </p>
         {(slot.booked_by_user_id || slot.booked_by) && (
           <div className="flex items-center gap-1.5 mt-1.5">
@@ -156,9 +140,7 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
         <div className="bg-card rounded-2xl border border-border overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Calendar className="w-4 h-4 text-primary" />
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Confirmed Bookings
-            </h2>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Confirmed Bookings</h2>
           </div>
           <div className="divide-y divide-border">
             {upcomingBooked.map((s) => renderSlot(s, true))}
@@ -168,9 +150,7 @@ export default function PastBookingsLog({ slots, leaderTimezone, onCancelBooking
 
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-            Past Bookings Log
-          </h2>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Past Bookings Log</h2>
         </div>
         {pastBooked.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-8">No past bookings yet.</p>
