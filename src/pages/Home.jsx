@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { format, startOfWeek, endOfWeek, subDays, parseISO } from "date-fns";
 import { Settings } from "lucide-react";
@@ -12,55 +12,83 @@ import AccountabilityGroupSection from "../components/home/AccountabilityGroupSe
 import JoinCodeForm from "../components/home/JoinCodeForm";
 
 const TAGLINES = [
-"Go therefore and make disciples of all nations, baptizing them in the name of the Father and of the Son and of the Holy Spirit. — Matthew 28:19"];
-
+  "Go therefore and make disciples of all nations, baptizing them in the name of the Father and of the Son and of the Holy Spirit. — Matthew 28:19"
+];
 
 export default function Home() {
   const { user, checkAppState } = useAuth();
-  const queryClient = useQueryClient();
   const [showJoinCode, setShowJoinCode] = useState(false);
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
 
-  // Track oversight_leader_id reactively — subscribe to User entity changes
   const [oversightLeaderId, setOversightLeaderId] = useState(user?.oversight_leader_id || null);
 
-  // Sync from auth context on mount and when user changes
   useEffect(() => {
     setOversightLeaderId(user?.oversight_leader_id || null);
   }, [user?.oversight_leader_id]);
 
-  // Subscribe to real-time User changes so the card hides the moment oversight_leader_id is set
+  // Subscribe to real-time profile changes
   useEffect(() => {
     if (!user?.id) return;
-    const unsub = base44.entities.User.subscribe((event) => {
-      if (event.id === user.id && event.data?.oversight_leader_id) {
-        setOversightLeaderId(event.data.oversight_leader_id);
-      }
-    });
-    return unsub;
+    const channel = supabase
+      .channel('home-profile-changes')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'profiles',
+        filter: `id=eq.${user.id}`
+      }, (payload) => {
+        if (payload.new?.oversight_leader_id) {
+          setOversightLeaderId(payload.new.oversight_leader_id);
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
   }, [user?.id]);
 
   const olId = oversightLeaderId || (isAdmin ? user?.id : null);
   const hasGroup = isAdmin || !!oversightLeaderId;
   const today = format(new Date(), "yyyy-MM-dd");
-  const tagline = useMemo(() => TAGLINES[new Date().getDay() % TAGLINES.length], []);
 
   const { data: logs = [] } = useQuery({
-    queryKey: ["dailyLogs", user?.email],
-    queryFn: () => base44.entities.DailyLog.filter({ created_by: user.email }, "-date", 60),
-    enabled: !!user?.email
+    queryKey: ["dailyLogs", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('daily_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+        .limit(60);
+      return data || [];
+    },
+    enabled: !!user?.id
   });
 
   const { data: challenges = [] } = useQuery({
-    queryKey: ["challenges", user?.email],
-    queryFn: () => base44.entities.ChallengeSelection.filter({ created_by: user.email }, "-created_date", 20),
-    enabled: !!user?.email
+    queryKey: ["challenges", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('challenge_selections')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      return data || [];
+    },
+    enabled: !!user?.id
   });
 
   const { data: updates = [] } = useQuery({
-    queryKey: ["weeklyUpdates", user?.email],
-    queryFn: () => base44.entities.WeeklyUpdate.filter({ created_by: user.email }, "-created_date", 10),
-    enabled: !!user?.email
+    queryKey: ["weeklyUpdates", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('weekly_updates')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      return data || [];
+    },
+    enabled: !!user?.id
   });
 
   const todayLog = logs.find((l) => l.date === today);
@@ -70,13 +98,10 @@ export default function Home() {
     const sorted = [...logs]
       .filter((l) => l.bible_reading_minutes > 0)
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-
     let checkDate = new Date();
-    // If no log today yet, start checking from yesterday
     if (!sorted.find((l) => l.date === today)) {
       checkDate = subDays(checkDate, 1);
     }
-
     for (let i = 0; i < 365; i++) {
       const dateStr = format(checkDate, "yyyy-MM-dd");
       if (sorted.find((l) => l.date === dateStr)) {
@@ -92,16 +117,10 @@ export default function Home() {
   const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
   const weekEnd = endOfWeek(new Date(), { weekStartsOn: 1 });
   const weeklyBible = logs
-    .filter((l) => {
-      const d = parseISO(l.date);
-      return d >= weekStart && d <= weekEnd;
-    })
+    .filter((l) => { const d = parseISO(l.date); return d >= weekStart && d <= weekEnd; })
     .reduce((sum, l) => sum + (l.bible_reading_minutes || 0), 0);
   const weeklyPrayer = logs
-    .filter((l) => {
-      const d = parseISO(l.date);
-      return d >= weekStart && d <= weekEnd;
-    })
+    .filter((l) => { const d = parseISO(l.date); return d >= weekStart && d <= weekEnd; })
     .reduce((sum, l) => sum + (l.prayer_minutes || 0), 0);
 
   const activeChallenge = challenges.find(
@@ -110,14 +129,12 @@ export default function Home() {
 
   return (
     <div className="px-5 pt-6 space-y-5">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-widest">
             {format(new Date(), "EEEE, MMMM d")}
           </p>
           <h1 className="text-2xl font-bold mt-1">Disciple</h1>
-          
         </div>
         <Link
           to="/Settings"
@@ -127,7 +144,6 @@ export default function Home() {
         </Link>
       </div>
 
-      {/* No Leader Alert */}
       {!hasGroup && (
         <div className="bg-accent/10 rounded-2xl p-4 border border-accent/20">
           <p className="text-sm text-accent font-medium mb-2">Join a Group</p>
@@ -143,7 +159,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* Tagline */}
       <div className="bg-gradient-to-r from-primary/20 to-primary/5 rounded-2xl p-4 border border-primary/20">
         <p className="text-sm font-medium text-primary italic leading-relaxed">
           "Go therefore and make disciples of all nations, baptizing them in the name of the Father and of the Son and of the Holy Spirit."
@@ -151,23 +166,18 @@ export default function Home() {
         <p className="text-xs text-primary/70 font-semibold mt-2">— Matthew 28:19</p>
       </div>
 
-      {/* Daily Check-in */}
       <DailyCheckIn todayLog={todayLog} streak={streak} olId={olId} />
 
-      {/* Weekly Summary */}
       <WeeklySummary
         weeklyBible={weeklyBible}
         weeklyPrayer={weeklyPrayer}
         activeChallenge={activeChallenge}
       />
 
-      {/* Recent Activity */}
       <RecentActivity logs={logs.slice(0, 5)} updates={updates.slice(0, 5)} />
 
-      {/* Accountability Group */}
       <AccountabilityGroupSection user={user} />
 
-      {/* Join Code Form */}
       <JoinCodeForm
         open={showJoinCode}
         onOpenChange={setShowJoinCode}

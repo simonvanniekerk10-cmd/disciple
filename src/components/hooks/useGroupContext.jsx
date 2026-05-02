@@ -1,11 +1,5 @@
-/**
- * useGroupContext — resolves the current user's oversight_leader_id.
- * Uses native Base44 role field (user.role) — no roles array.
- * For admins, their own user ID is their leader ID.
- * For users, their oversight_leader_id points to their leader.
- */
 import { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 
 export function useGroupContext() {
@@ -24,31 +18,32 @@ export function useGroupContext() {
       return;
     }
 
-    let cancelled = false;
+    // Check profile directly from Supabase
+    supabase
+      .from('profiles')
+      .select('oversight_leader_id')
+      .eq('id', user?.id)
+      .single()
+      .then(({ data }) => {
+        setResolvedOlId(data?.oversight_leader_id || null);
+        setIsLoading(false);
+      });
 
-    // Single immediate check in case DB is ahead of auth context
-    base44.auth.me().then((me) => {
-      if (cancelled) return;
-      setResolvedOlId(me?.oversight_leader_id || null);
-      setIsLoading(false);
-    });
+    // Subscribe to real-time profile changes
+    const channel = supabase
+      .channel('profile-changes')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'profiles',
+        filter: `id=eq.${user?.id}`
+      }, (payload) => {
+        setResolvedOlId(payload.new?.oversight_leader_id || null);
+        setIsLoading(false);
+      })
+      .subscribe();
 
-    // Subscribe to real-time User entity changes
-    const unsub = base44.entities.User.subscribe(async (event) => {
-      if (cancelled) return;
-      if (event.type === "update" && event.data?.id === user?.id) {
-        const me = await base44.auth.me();
-        if (!cancelled) {
-          setResolvedOlId(me?.oversight_leader_id || null);
-          setIsLoading(false);
-        }
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsub();
-    };
+    return () => supabase.removeChannel(channel);
   }, [user?.id, user?.oversight_leader_id, role]);
 
   if (role === "super_admin") {
