@@ -1,15 +1,5 @@
-/**
- * JoinGroup page — handles invite link flow.
- * URL: /join?token=LEADER_USER_ID
- *
- * Flow:
- * 1. Capture token from URL → store in localStorage (survives login redirect)
- * 2. Redirect unauthenticated users to login
- * 3. Once authenticated, write token directly to oversight_leader_id via updateMe
- * 4. Show success and auto-redirect to Home after 2s
- */
 import { useEffect, useState, useCallback } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { CheckCircle, Loader2, AlertCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
@@ -20,10 +10,9 @@ const TOKEN_KEY = "ol_invite_token";
 export default function JoinGroup() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [status, setStatus] = useState("loading"); // loading | success | already_assigned | invalid | error
+  const [status, setStatus] = useState("loading");
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Step 1: Capture token from URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
@@ -43,26 +32,28 @@ export default function JoinGroup() {
       return;
     }
 
-    // Already assigned to this leader — nothing to do
     if (user?.oversight_leader_id === token) {
       setStatus("already_assigned");
       return;
     }
 
-    // Write directly to the current user's own record — no elevated permissions needed
-    await base44.auth.updateMe({ oversight_leader_id: token });
+    const { error } = await supabase
+      .from('profiles')
+      .update({ oversight_leader_id: token })
+      .eq('id', user.id);
+
+    if (error) {
+      throw new Error(error.message);
+    }
 
     localStorage.removeItem(TOKEN_KEY);
     setStatus("success");
-
     setTimeout(() => { window.location.replace("/Home"); }, 2000);
-  }, [user?.id, navigate]);
+  }, [user?.id]);
 
-  // Step 2: Run assignment once user is available
   useEffect(() => {
     if (!user) {
-      // Not logged in — redirect to login which will return to this URL after auth
-      base44.auth.redirectToLogin(window.location.href);
+      navigate(`/login?redirect=${encodeURIComponent(window.location.href)}`);
       return;
     }
 
@@ -76,7 +67,7 @@ export default function JoinGroup() {
       setErrorMsg("We couldn't save your group assignment. Please try again.");
       setStatus("error");
     });
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center px-6">
@@ -117,9 +108,7 @@ export default function JoinGroup() {
           <>
             <AlertCircle className="w-10 h-10 text-destructive mx-auto" />
             <h2 className="text-xl font-bold">Invalid invite link</h2>
-            <p className="text-sm text-muted-foreground">
-              Please ask your Leader for a new link.
-            </p>
+            <p className="text-sm text-muted-foreground">Please ask your Leader for a new link.</p>
             <Button asChild variant="outline" className="w-full">
               <Link to="/Home">Go to Home</Link>
             </Button>
@@ -133,7 +122,7 @@ export default function JoinGroup() {
             <p className="text-sm text-muted-foreground">{errorMsg}</p>
             <Button
               className="w-full bg-primary text-primary-foreground font-semibold"
-              onClick={() => doAssign().catch((err) => {
+              onClick={() => doAssign().catch(() => {
                 setErrorMsg("We couldn't save your group assignment. Please try again.");
                 setStatus("error");
               })}
