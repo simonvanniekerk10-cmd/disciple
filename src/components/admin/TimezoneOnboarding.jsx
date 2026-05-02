@@ -1,10 +1,5 @@
-/**
- * LeaderOnboarding — shown on first admin login.
- * Step 1: Choose timezone
- * Step 2: Choose calendar integration (Automatic / Manual)
- */
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { Globe, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -27,11 +22,15 @@ export default function TimezoneOnboarding({ userId, existingProfileId, onComple
 
   const handleSave = async () => {
     setSaving(true);
-    const data = { user_id: userId, timezone, calendar_mode: "manual" };
     if (existingProfileId) {
-      await base44.entities.OversightLeaderProfile.update(existingProfileId, data);
+      await supabase
+        .from('oversight_leader_profiles')
+        .update({ timezone, calendar_mode: "manual" })
+        .eq('id', existingProfileId);
     } else {
-      await base44.entities.OversightLeaderProfile.create(data);
+      await supabase
+        .from('oversight_leader_profiles')
+        .insert({ user_id: userId, timezone, calendar_mode: "manual" });
     }
     setSaving(false);
     onComplete();
@@ -46,7 +45,7 @@ export default function TimezoneOnboarding({ userId, existingProfileId, onComple
           </div>
           <h2 className="text-xl font-bold text-foreground">Which timezone are you in?</h2>
           <p className="text-sm text-muted-foreground">
-            This ensures catch-up times and emails show the correct local time for you and your disciples.
+            This ensures catch-up times show the correct local time for you and your disciples.
           </p>
         </div>
         <div className="space-y-1.5">
@@ -62,11 +61,7 @@ export default function TimezoneOnboarding({ userId, existingProfileId, onComple
             </SelectContent>
           </Select>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full bg-primary text-primary-foreground font-semibold"
-        >
+        <Button onClick={handleSave} disabled={saving} className="w-full bg-primary text-primary-foreground font-semibold">
           {saving ? "Saving..." : "Get Started"} <ChevronRight className="w-4 h-4" />
         </Button>
       </div>

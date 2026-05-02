@@ -1,9 +1,5 @@
-/**
- * CalendarSettings — shown in AdminPanel for leaders to change their
- * timezone and calendar integration mode after initial onboarding.
- */
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { Globe, Calendar, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -18,7 +14,10 @@ export default function CalendarSettings({ leaderProfile, onSaved }) {
 
   const handleSave = async () => {
     setSaving(true);
-    await base44.entities.OversightLeaderProfile.update(leaderProfile.id, { timezone, calendar_mode: "manual" });
+    await supabase
+      .from('oversight_leader_profiles')
+      .update({ timezone, calendar_mode: "manual" })
+      .eq('id', leaderProfile.id);
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -40,7 +39,6 @@ export default function CalendarSettings({ leaderProfile, onSaved }) {
 
       {open && (
         <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
-          {/* Timezone */}
           <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Globe className="w-3 h-3" /> Timezone
@@ -56,13 +54,7 @@ export default function CalendarSettings({ leaderProfile, onSaved }) {
               </SelectContent>
             </Select>
           </div>
-
-
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="w-full bg-primary text-primary-foreground font-semibold"
-          >
+          <Button onClick={handleSave} disabled={saving} className="w-full bg-primary text-primary-foreground font-semibold">
             {saved ? "Saved!" : saving ? "Saving..." : "Save Settings"}
           </Button>
         </div>

@@ -2,11 +2,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BookOpen, Heart, Flame } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
 import { format } from "date-fns";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function DailyCheckIn({ todayLog, streak, olId }) {
+  const { user } = useAuth();
   const [bibleMinutes, setBibleMinutes] = useState("");
   const [prayerMinutes, setPrayerMinutes] = useState("");
   const [savingBible, setSavingBible] = useState(false);
@@ -18,11 +20,13 @@ export default function DailyCheckIn({ todayLog, streak, olId }) {
     setSavingBible(true);
     const mins = parseInt(bibleMinutes) || 0;
     if (todayLog) {
-      await base44.entities.DailyLog.update(todayLog.id, {
-        bible_reading_minutes: (todayLog.bible_reading_minutes || 0) + mins,
-      });
+      await supabase
+        .from('daily_logs')
+        .update({ bible_reading_minutes: (todayLog.bible_reading_minutes || 0) + mins })
+        .eq('id', todayLog.id);
     } else {
-      await base44.entities.DailyLog.create({
+      await supabase.from('daily_logs').insert({
+        user_id: user.id,
         date: today,
         bible_reading_minutes: mins,
         prayer_minutes: 0,
@@ -38,11 +42,13 @@ export default function DailyCheckIn({ todayLog, streak, olId }) {
     setSavingPrayer(true);
     const mins = parseInt(prayerMinutes) || 0;
     if (todayLog) {
-      await base44.entities.DailyLog.update(todayLog.id, {
-        prayer_minutes: (todayLog.prayer_minutes || 0) + mins,
-      });
+      await supabase
+        .from('daily_logs')
+        .update({ prayer_minutes: (todayLog.prayer_minutes || 0) + mins })
+        .eq('id', todayLog.id);
     } else {
-      await base44.entities.DailyLog.create({
+      await supabase.from('daily_logs').insert({
+        user_id: user.id,
         date: today,
         bible_reading_minutes: 0,
         prayer_minutes: mins,
@@ -50,7 +56,7 @@ export default function DailyCheckIn({ todayLog, streak, olId }) {
       });
     }
     setPrayerMinutes("");
-    queryClient.invalidateQueries({ queryKey: ["dailyLogs"] }); // prefix match catches ["dailyLogs", email]
+    queryClient.invalidateQueries({ queryKey: ["dailyLogs"] });
     setSavingPrayer(false);
   };
 

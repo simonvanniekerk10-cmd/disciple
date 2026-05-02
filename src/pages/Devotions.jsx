@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { format } from "date-fns";
 import { Plus, X, Image, Camera, Upload } from "lucide-react";
@@ -22,9 +22,17 @@ export default function Devotions() {
   const galleryInputRef = useRef(null);
 
   const { data: entries = [], isLoading } = useQuery({
-    queryKey: ["devotions", user?.email],
-    queryFn: () => base44.entities.DevotionEntry.filter({ created_by: user.email }, "-date", 100),
-    enabled: !!user?.email,
+    queryKey: ["devotions", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('devotion_entries')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+        .limit(100);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
   const handleFileChange = (e) => {
@@ -38,13 +46,31 @@ export default function Devotions() {
   const handleSave = async () => {
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    await base44.entities.DevotionEntry.create({
-      image_url: file_url,
+
+    // Upload to Supabase Storage
+    const fileName = `${user.id}/${Date.now()}-${file.name}`;
+    const { error: uploadError } = await supabase.storage
+      .from('devotions')
+      .upload(fileName, file);
+
+    if (uploadError) {
+      console.error('Upload error:', uploadError);
+      setUploading(false);
+      return;
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('devotions')
+      .getPublicUrl(fileName);
+
+    await supabase.from('devotion_entries').insert({
+      user_id: user.id,
+      image_url: publicUrl,
       note: note.trim() || "",
       date: format(new Date(), "yyyy-MM-dd"),
       oversight_leader_id: olId,
     });
+
     setFile(null);
     setPreview(null);
     setNote("");
@@ -101,35 +127,20 @@ export default function Devotions() {
         </div>
       )}
 
-      {/* Add Devotion Modal */}
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent className="bg-card border-border max-w-md">
           <DialogHeader>
             <DialogTitle>Add Devotion</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            {/* Hidden inputs */}
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/*"
-              capture="environment"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <input
-              ref={galleryInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/heic,image/*"
-              onChange={handleFileChange}
-              className="hidden"
-            />
+            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" />
+            <input ref={galleryInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
 
             {preview ? (
               <div className="relative rounded-xl overflow-hidden aspect-video">
                 <img src={preview} alt="Preview" className="w-full h-full object-cover" />
                 <button
-                  onClick={() => { setFile(null); setPreview(null); if (cameraInputRef.current) cameraInputRef.current.value = ""; if (galleryInputRef.current) galleryInputRef.current.value = ""; }}
+                  onClick={() => { setFile(null); setPreview(null); }}
                   className="absolute top-2 right-2 bg-black/60 rounded-full p-1"
                 >
                   <X className="w-4 h-4 text-white" />
@@ -173,23 +184,16 @@ export default function Devotions() {
         </DialogContent>
       </Dialog>
 
-      {/* View Entry Modal */}
       <Dialog open={!!viewEntry} onOpenChange={() => setViewEntry(null)}>
         <DialogContent className="bg-card border-border max-w-md p-0 overflow-hidden">
           {viewEntry && (
             <>
-              <img
-                src={viewEntry.image_url}
-                alt="Devotion"
-                className="w-full max-h-[60vh] object-contain bg-black"
-              />
+              <img src={viewEntry.image_url} alt="Devotion" className="w-full max-h-[60vh] object-contain bg-black" />
               <div className="p-5">
                 <p className="text-sm text-muted-foreground font-medium">
                   {viewEntry.date ? format(new Date(viewEntry.date), "EEEE, MMMM d, yyyy") : ""}
                 </p>
-                {viewEntry.note && (
-                  <p className="mt-2 text-sm">{viewEntry.note}</p>
-                )}
+                {viewEntry.note && <p className="mt-2 text-sm">{viewEntry.note}</p>}
               </div>
             </>
           )}

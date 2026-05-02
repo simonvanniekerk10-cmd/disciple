@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { useGroupContext } from "@/components/hooks/useGroupContext";
 import { Button } from "@/components/ui/button";
@@ -20,28 +20,28 @@ export default function TestimoniesSection() {
   const [submitted, setSubmitted] = useState(false);
 
   const { data: testimonies = [] } = useQuery({
-    queryKey: ["testimonies", user?.email],
-    queryFn: () => base44.entities.Testimony.filter({ created_by: user.email }, "-created_date", 50),
-    enabled: !!user?.email,
+    queryKey: ["testimonies", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('testimonies')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
   const handleSubmit = async () => {
     if (!title.trim() || !testimonyText.trim()) return;
     setSaving(true);
-    await base44.entities.Testimony.create({
+    await supabase.from('testimonies').insert({
+      user_id: user.id,
       oversight_leader_id,
       title,
       testimony_text: testimonyText,
     });
-    // Send email to leader
-    if (oversight_leader_id) {
-      await base44.functions.invoke('sendTestimonyEmail', {
-        oversight_leader_id,
-        title,
-        testimony_text: testimonyText,
-        disciple_name: user?.full_name || user?.email,
-      });
-    }
     queryClient.invalidateQueries({ queryKey: ["testimonies"] });
     setTitle("");
     setTestimonyText("");
@@ -66,11 +66,7 @@ export default function TestimoniesSection() {
       )}
 
       {!showForm && (
-        <Button
-          onClick={() => setShowForm(true)}
-          variant="outline"
-          className="w-full border-dashed text-muted-foreground gap-2 mb-4"
-        >
+        <Button onClick={() => setShowForm(true)} variant="outline" className="w-full border-dashed text-muted-foreground gap-2 mb-4">
           <Plus className="w-4 h-4" /> Share a Testimony
         </Button>
       )}
@@ -85,28 +81,13 @@ export default function TestimoniesSection() {
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Title</label>
-            <Input
-              placeholder="e.g. Healing, Salvation, Breakthrough"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="bg-secondary border-0 mt-1.5"
-            />
+            <Input placeholder="e.g. Healing, Salvation, Breakthrough" value={title} onChange={(e) => setTitle(e.target.value)} className="bg-secondary border-0 mt-1.5" />
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Your Testimony</label>
-            <Textarea
-              placeholder="Share what God has done..."
-              value={testimonyText}
-              onChange={(e) => setTestimonyText(e.target.value)}
-              className="bg-secondary border-0 mt-1.5 resize-none"
-              rows={5}
-            />
+            <Textarea placeholder="Share what God has done..." value={testimonyText} onChange={(e) => setTestimonyText(e.target.value)} className="bg-secondary border-0 mt-1.5 resize-none" rows={5} />
           </div>
-          <Button
-            onClick={handleSubmit}
-            disabled={saving || !title.trim() || !testimonyText.trim()}
-            className="w-full bg-primary text-primary-foreground font-semibold"
-          >
+          <Button onClick={handleSubmit} disabled={saving || !title.trim() || !testimonyText.trim()} className="w-full bg-primary text-primary-foreground font-semibold">
             {saving ? "Sharing..." : "Share Testimony"}
           </Button>
         </div>
@@ -117,7 +98,7 @@ export default function TestimoniesSection() {
           <div key={t.id} className="bg-card rounded-2xl border border-border p-4">
             <div className="flex items-center justify-between mb-1">
               <p className="text-sm font-semibold">{t.title}</p>
-              <span className="text-[10px] text-muted-foreground">{format(parseISO(t.created_date), "d MMM yyyy")}</span>
+              <span className="text-[10px] text-muted-foreground">{format(parseISO(t.created_at), "d MMM yyyy")}</span>
             </div>
             <p className="text-sm text-muted-foreground leading-relaxed" style={{ whiteSpace: "pre-wrap" }}>{t.testimony_text}</p>
           </div>

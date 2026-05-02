@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Users, Plus, Pencil, Trash2, X, Check } from "lucide-react";
+import { Users, Plus, Pencil, Trash2, X } from "lucide-react";
 
 export default function CorporatePrayerAdmin() {
   const { user } = useAuth();
@@ -19,7 +19,15 @@ export default function CorporatePrayerAdmin() {
 
   const { data: items = [] } = useQuery({
     queryKey: ["corporatePrayer", user?.id],
-    queryFn: () => base44.entities.CorporatePrayerItem.filter({ oversight_leader_id: user.id }, "-created_date", 100),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('corporate_prayer_items')
+        .select('*')
+        .eq('oversight_leader_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      return data || [];
+    },
     enabled: !!user?.id,
   });
 
@@ -48,9 +56,9 @@ export default function CorporatePrayerAdmin() {
     setSaving(true);
     const payload = { oversight_leader_id: user.id, title, description, date: date || null };
     if (editingItem) {
-      await base44.entities.CorporatePrayerItem.update(editingItem.id, payload);
+      await supabase.from('corporate_prayer_items').update(payload).eq('id', editingItem.id);
     } else {
-      await base44.entities.CorporatePrayerItem.create(payload);
+      await supabase.from('corporate_prayer_items').insert(payload);
     }
     queryClient.invalidateQueries({ queryKey: ["corporatePrayer"] });
     handleCancel();
@@ -58,7 +66,7 @@ export default function CorporatePrayerAdmin() {
   };
 
   const handleDelete = async (id) => {
-    await base44.entities.CorporatePrayerItem.delete(id);
+    await supabase.from('corporate_prayer_items').delete().eq('id', id);
     queryClient.invalidateQueries({ queryKey: ["corporatePrayer"] });
   };
 
@@ -72,32 +80,14 @@ export default function CorporatePrayerAdmin() {
 
       {showForm && (
         <div className="p-4 border-b border-border space-y-3 bg-secondary/30">
-          <Input
-            placeholder="Prayer item title *"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="bg-card border-border"
-          />
-          <Textarea
-            placeholder="Description (optional)"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="bg-card border-border"
-            rows={4}
-          />
-          <Input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="bg-card border-border"
-          />
+          <Input placeholder="Prayer item title *" value={title} onChange={(e) => setTitle(e.target.value)} className="bg-card border-border" />
+          <Textarea placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} className="bg-card border-border" rows={4} />
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="bg-card border-border" />
           <div className="flex gap-2">
             <Button onClick={handleSave} disabled={saving || !title.trim()} className="flex-1 bg-primary text-primary-foreground">
               {saving ? "Saving..." : editingItem ? "Save Changes" : "Add Item"}
             </Button>
-            <Button variant="outline" onClick={handleCancel}>
-              <X className="w-4 h-4" />
-            </Button>
+            <Button variant="outline" onClick={handleCancel}><X className="w-4 h-4" /></Button>
           </div>
         </div>
       )}

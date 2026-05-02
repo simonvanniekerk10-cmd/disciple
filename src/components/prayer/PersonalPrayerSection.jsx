@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { Lock, Check } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,12 +16,19 @@ export default function PersonalPrayerSection() {
   const autoSaveTimer = useRef(null);
 
   const { data: items = [], isLoading } = useQuery({
-    queryKey: ["personalPrayer", user?.email],
-    queryFn: () => base44.entities.PersonalPrayerItem.filter({ created_by: user.email }, "-created_date", 1),
-    enabled: !!user?.email,
+    queryKey: ["personalPrayer", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('personal_prayer_items')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
-  // Load saved text on first fetch
   useEffect(() => {
     if (items.length > 0) {
       setText(items[0].title || "");
@@ -32,12 +39,19 @@ export default function PersonalPrayerSection() {
   const saveText = async (value) => {
     setSaving(true);
     if (recordIdRef.current) {
-      await base44.entities.PersonalPrayerItem.update(recordIdRef.current, { title: value });
+      await supabase
+        .from('personal_prayer_items')
+        .update({ title: value })
+        .eq('id', recordIdRef.current);
     } else {
-      const created = await base44.entities.PersonalPrayerItem.create({ title: value });
-      recordIdRef.current = created.id;
+      const { data } = await supabase
+        .from('personal_prayer_items')
+        .insert({ user_id: user.id, title: value })
+        .select()
+        .single();
+      if (data) recordIdRef.current = data.id;
     }
-    queryClient.invalidateQueries({ queryKey: ["personalPrayer", user?.email] });
+    queryClient.invalidateQueries({ queryKey: ["personalPrayer", user?.id] });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -47,12 +61,8 @@ export default function PersonalPrayerSection() {
     const value = e.target.value;
     setText(value);
     setSaved(false);
-
-    // Auto-save after 2 seconds of no typing
     clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      saveText(value);
-    }, 2000);
+    autoSaveTimer.current = setTimeout(() => saveText(value), 2000);
   };
 
   const handleSave = () => {
@@ -67,11 +77,9 @@ export default function PersonalPrayerSection() {
         <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Personal Prayer List</h2>
         <span className="text-[10px] bg-secondary px-1.5 py-0.5 rounded-full text-muted-foreground">Private</span>
       </div>
-
       <p className="text-xs text-muted-foreground mb-3">
         This list is completely private — your leader cannot see it.
       </p>
-
       {isLoading ? (
         <div className="flex justify-center py-6">
           <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />

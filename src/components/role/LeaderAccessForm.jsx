@@ -1,17 +1,10 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 
 export default function LeaderAccessForm({ open, onOpenChange }) {
@@ -25,10 +18,9 @@ export default function LeaderAccessForm({ open, onOpenChange }) {
 
   const handleSubmit = async () => {
     if (!isFormValid) return;
-
     setIsSubmitting(true);
     try {
-      await base44.entities.LeaderAccessRequest.create({
+      await supabase.from('leader_access_requests').insert({
         user_id: user.id,
         user_email: user.email,
         user_name: user.full_name,
@@ -37,8 +29,6 @@ export default function LeaderAccessForm({ open, onOpenChange }) {
         leadership_role: leadershipRole,
         status: 'pending',
       });
-
-      // Reset form
       setChurch('');
       setPastorApproved(false);
       setLeadershipRole('');
@@ -59,9 +49,7 @@ export default function LeaderAccessForm({ open, onOpenChange }) {
             Please complete all fields below. A Super Admin will review your request.
           </DialogDescription>
         </DialogHeader>
-
         <div className="space-y-4">
-          {/* Church Field */}
           <div className="space-y-2">
             <Label htmlFor="church">What church are you from?</Label>
             <Input
@@ -72,25 +60,15 @@ export default function LeaderAccessForm({ open, onOpenChange }) {
               disabled={isSubmitting}
             />
           </div>
-
-          {/* Pastor Approval Field */}
           <div className="space-y-2">
             <Label className="flex items-center gap-2">
-              <Switch
-                checked={pastorApproved}
-                onCheckedChange={setPastorApproved}
-                disabled={isSubmitting}
-              />
+              <Switch checked={pastorApproved} onCheckedChange={setPastorApproved} disabled={isSubmitting} />
               Has your Pastor approved this request?
             </Label>
             {!pastorApproved && (
-              <p className="text-xs text-destructive">
-                Please speak with your Pastor before requesting Leader access.
-              </p>
+              <p className="text-xs text-destructive">Please speak with your Pastor before requesting Leader access.</p>
             )}
           </div>
-
-          {/* Leadership Role Field */}
           <div className="space-y-2">
             <Label htmlFor="role">What leadership role are you stepping into?</Label>
             <Input
@@ -102,19 +80,9 @@ export default function LeaderAccessForm({ open, onOpenChange }) {
             />
           </div>
         </div>
-
         <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isSubmitting}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!isFormValid || isSubmitting}
-          >
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!isFormValid || isSubmitting}>
             {isSubmitting ? 'Submitting...' : 'Submit Request'}
           </Button>
         </DialogFooter>

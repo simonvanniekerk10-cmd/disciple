@@ -1,16 +1,15 @@
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
 import { AlertCircle, CheckCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
-/**
- * Modal for unassigned users to join a group using a leader's code
- */
 export default function JoinCodeForm({ open, onOpenChange, onSuccess }) {
+  const { user } = useAuth();
   const [code, setCode] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | loading | success | error
+  const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
 
   const handleSubmit = async () => {
@@ -24,20 +23,17 @@ export default function JoinCodeForm({ open, onOpenChange, onSuccess }) {
     setError("");
 
     try {
-      // Write directly — no User list lookup needed, user always has permission to update their own record
-      await base44.auth.updateMe({ oversight_leader_id: leaderId });
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ oversight_leader_id: leaderId })
+        .eq('id', user.id);
 
-      // Confirm by reading back the current user's own record only
-      const verifiedUser = await base44.auth.me();
-      if (verifiedUser.oversight_leader_id === leaderId) {
-        setStatus("success");
-        setTimeout(() => {
-          window.location.replace("/Home");
-        }, 1500);
-      } else {
-        setStatus("error");
-        setError("That code doesn't seem to be working. Please check it with your Leader and try again.");
-      }
+      if (updateError) throw updateError;
+
+      setStatus("success");
+      setTimeout(() => {
+        window.location.replace("/Home");
+      }, 1500);
     } catch {
       setStatus("error");
       setError("That code doesn't seem to be working. Please check it with your Leader and try again.");
@@ -62,11 +58,10 @@ export default function JoinCodeForm({ open, onOpenChange, onSuccess }) {
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 className="bg-secondary border-0"
-                disabled={status === "loading"}
               />
               <Button
                 onClick={handleSubmit}
-                disabled={!code.trim() || status === "loading"}
+                disabled={!code.trim()}
                 className="w-full bg-primary text-primary-foreground font-semibold"
               >
                 Join Group
@@ -97,14 +92,7 @@ export default function JoinCodeForm({ open, onOpenChange, onSuccess }) {
                 <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
                 <p className="text-sm text-destructive">{error}</p>
               </div>
-              <Button
-                onClick={() => {
-                  setStatus("idle");
-                  setError("");
-                }}
-                variant="outline"
-                className="w-full"
-              >
+              <Button onClick={() => { setStatus("idle"); setError(""); }} variant="outline" className="w-full">
                 Try Again
               </Button>
             </div>

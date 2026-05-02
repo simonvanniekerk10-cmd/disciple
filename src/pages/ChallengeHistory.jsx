@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { format } from "date-fns";
 import { ArrowLeft, Trophy } from "lucide-react";
@@ -10,15 +10,31 @@ export default function ChallengeHistory() {
   const { user } = useAuth();
 
   const { data: challenges = [] } = useQuery({
-    queryKey: ["challenges", user?.email],
-    queryFn: () => base44.entities.ChallengeSelection.filter({ created_by: user.email }, "-created_date", 50),
-    enabled: !!user?.email,
+    queryKey: ["challenges", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('challenge_selections')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
   const { data: updates = [] } = useQuery({
-    queryKey: ["weeklyUpdates", user?.email],
-    queryFn: () => base44.entities.WeeklyUpdate.filter({ created_by: user.email }, "-created_date", 100),
-    enabled: !!user?.email,
+    queryKey: ["weeklyUpdates", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('weekly_updates')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
   const completed = challenges.filter((c) => c.status === "completed");
