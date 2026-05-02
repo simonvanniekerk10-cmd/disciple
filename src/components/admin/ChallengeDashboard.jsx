@@ -1,46 +1,63 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { BarChart2, CheckCircle2, PlayCircle, Clock, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import MemberChallengeDetail from "@/components/admin/MemberChallengeDetail";
 
 export default function ChallengeDashboard() {
   const { user } = useAuth();
   const [selectedUser, setSelectedUser] = useState(null);
 
-  const { data: selections = [], isLoading } = useQuery({
-    queryKey: ["adminChallengeSelections", user?.id],
-    queryFn: () =>
-      base44.entities.ChallengeSelection.filter(
-        { oversight_leader_id: user?.id },
-        "-created_date",
-        200
-      ),
+  const { data: members = [] } = useQuery({
+    queryKey: ["groupMembers", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('oversight_leader_id', user.id);
+      return data || [];
+    },
     enabled: !!user?.id,
   });
 
-  const { data: allUsers = [] } = useQuery({
-    queryKey: ["groupUsers", user?.id],
-    queryFn: () => base44.entities.User.filter({ oversight_leader_id: user?.id }),
-    enabled: !!user?.id,
+  const { data: selections = [], isLoading } = useQuery({
+    queryKey: ["adminChallengeSelections", user?.id],
+    queryFn: async () => {
+      const memberIds = members.map(m => m.id);
+      if (memberIds.length === 0) return [];
+      const { data } = await supabase
+        .from('challenge_selections')
+        .select('*')
+        .in('user_id', memberIds)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      return data || [];
+    },
+    enabled: members.length > 0,
   });
 
   const notStarted = selections.filter((s) => s.status === "not_started");
   const inProgress = selections.filter((s) => s.status === "in_progress");
   const completed = selections.filter((s) => s.status === "completed");
 
-  // Group selections by user
   const byUser = {};
   selections.forEach((s) => {
-    const email = s.created_by || "unknown";
-    if (!byUser[email]) byUser[email] = { email, active: null, completed: 0 };
+    const userId = s.user_id || "unknown";
+    if (!byUser[userId]) {
+      const member = members.find(m => m.id === userId);
+      byUser[userId] = {
+        userId,
+        name: member?.display_name || member?.full_name || member?.email || userId,
+        active: null,
+        completed: 0
+      };
+    }
     if (s.status === "in_progress" || s.status === "not_started") {
-      byUser[email].active = s;
+      byUser[userId].active = s;
     }
     if (s.status === "completed") {
-      byUser[email].completed += 1;
+      byUser[userId].completed += 1;
     }
   });
 
@@ -63,7 +80,6 @@ export default function ChallengeDashboard() {
         <h2 className="font-bold text-base">Challenge Dashboard</h2>
       </div>
 
-      {/* Summary stats */}
       <div className="grid grid-cols-3 gap-3">
         <div className="rounded-xl p-3 text-center" style={{background:'#EEF3FB',border:'1px solid #C8D8F0'}}>
           <Clock className="w-4 h-4 mx-auto mb-1" style={{color:'#1E2D50'}} />
@@ -88,20 +104,18 @@ export default function ChallengeDashboard() {
         </div>
       )}
 
-      {/* Per-user breakdown */}
       {Object.keys(byUser).length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">By Disciple</p>
           {Object.values(byUser).map((u) => (
             <div
-              key={u.email}
-              className="rounded-xl px-4 py-3 cursor-pointer transition-colors hover:opacity-90"
+              key={u.userId}
+              className="rounded-xl px-4 py-3 transition-colors hover:opacity-90"
               style={{background:'#EEF3FB',border:'1px solid #C8D8F0'}}
-              onClick={() => setSelectedUser(u)}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate" style={{color:'#1A1A40'}}>{u.email}</p>
+                  <p className="text-sm font-semibold truncate" style={{color:'#1A1A40'}}>{u.name}</p>
                   {u.active ? (
                     <>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{u.active.challenge_title}</p>
@@ -118,7 +132,6 @@ export default function ChallengeDashboard() {
                     <p className="text-xs text-muted-foreground">Completed</p>
                     <p className="text-base font-bold text-primary">{u.completed}</p>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
                 </div>
               </div>
             </div>
@@ -130,15 +143,6 @@ export default function ChallengeDashboard() {
         <p className="text-sm text-muted-foreground text-center py-4">
           No challenge activity yet from your group.
         </p>
-      )}
-
-      {selectedUser && (
-        <MemberChallengeDetail
-          memberEmail={selectedUser.email}
-          memberName={allUsers.find((u) => u.email === selectedUser.email)?.full_name}
-          olId={user?.id}
-          onClose={() => setSelectedUser(null)}
-        />
       )}
     </div>
   );
