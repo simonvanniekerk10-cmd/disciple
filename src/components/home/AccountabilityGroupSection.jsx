@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import GroupCard from "./GroupCard";
 
 function generateInviteCode() {
@@ -8,9 +8,9 @@ function generateInviteCode() {
 
 export default function AccountabilityGroupSection({ user }) {
   const [memberships, setMemberships] = useState([]);
-  const [groupMap, setGroupMap] = useState({}); // group_id -> group
+  const [groupMap, setGroupMap] = useState({});
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState(null); // null | "create" | "join"
+  const [mode, setMode] = useState(null);
   const [groupName, setGroupName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [saving, setSaving] = useState(false);
@@ -20,15 +20,19 @@ export default function AccountabilityGroupSection({ user }) {
   const loadGroups = async () => {
     if (!user?.id) return;
     setLoading(true);
-    const mems = await base44.entities.AccountabilityGroupMember.filter({ user_id: user.id });
-    setMemberships(mems);
-    if (mems.length > 0) {
+    const { data: mems } = await supabase
+      .from('accountability_group_members')
+      .select('*')
+      .eq('user_id', user.id);
+    setMemberships(mems || []);
+    if (mems && mems.length > 0) {
       const groupIds = [...new Set(mems.map((m) => m.group_id))];
-      const groupResults = await Promise.all(
-        groupIds.map((id) => base44.entities.AccountabilityGroup.filter({ id }))
-      );
+      const { data: groups } = await supabase
+        .from('accountability_groups')
+        .select('*')
+        .in('id', groupIds);
       const map = {};
-      groupResults.forEach((res) => { if (res[0]) map[res[0].id] = res[0]; });
+      (groups || []).forEach((g) => { map[g.id] = g; });
       setGroupMap(map);
     }
     setLoading(false);
@@ -41,12 +45,16 @@ export default function AccountabilityGroupSection({ user }) {
     setSaving(true);
     setError("");
     const code = generateInviteCode();
-    const grp = await base44.entities.AccountabilityGroup.create({
-      name: groupName.trim(),
-      created_by_user_id: user.id,
-      invite_code: code,
-    });
-    await base44.entities.AccountabilityGroupMember.create({
+    const { data: grp } = await supabase
+      .from('accountability_groups')
+      .insert({
+        name: groupName.trim(),
+        created_by_user_id: user.id,
+        invite_code: code,
+      })
+      .select()
+      .single();
+    await supabase.from('accountability_group_members').insert({
       group_id: grp.id,
       user_id: user.id,
       user_email: user.email,
@@ -61,21 +69,23 @@ export default function AccountabilityGroupSection({ user }) {
     if (!joinCode.trim()) return;
     setSaving(true);
     setError("");
-    const groups = await base44.entities.AccountabilityGroup.filter({ invite_code: joinCode.trim().toUpperCase() });
-    if (groups.length === 0) {
+    const { data: groups } = await supabase
+      .from('accountability_groups')
+      .select('*')
+      .eq('invite_code', joinCode.trim().toUpperCase());
+    if (!groups || groups.length === 0) {
       setError("No group found with that code.");
       setSaving(false);
       return;
     }
     const grp = groups[0];
-    // Check not already a member
     const existing = memberships.find((m) => m.group_id === grp.id);
     if (existing) {
       setError("You're already in this group.");
       setSaving(false);
       return;
     }
-    await base44.entities.AccountabilityGroupMember.create({
+    await supabase.from('accountability_group_members').insert({
       group_id: grp.id,
       user_id: user.id,
       user_email: user.email,
@@ -108,7 +118,6 @@ export default function AccountabilityGroupSection({ user }) {
     <div className="mt-6 pb-8 space-y-4">
       <h2 className="text-base font-bold" style={{ color: "#1E2D50" }}>Accountability Group</h2>
 
-      {/* Group cards */}
       {memberships.map((mem) => {
         const grp = groupMap[mem.group_id];
         if (!grp) return null;
@@ -123,7 +132,6 @@ export default function AccountabilityGroupSection({ user }) {
         );
       })}
 
-      {/* Inline create/join forms */}
       {mode === "create" && !newCode && (
         <div className="rounded-2xl p-4 space-y-3" style={{ background: "#FFFFFF", border: "1px solid #D0DAF0" }}>
           <p className="text-sm font-semibold" style={{ color: "#1E2D50" }}>Create a New Group</p>
@@ -184,7 +192,6 @@ export default function AccountabilityGroupSection({ user }) {
         </div>
       )}
 
-      {/* Always-visible action buttons */}
       {mode === null && (
         <div className="flex gap-3">
           <button
