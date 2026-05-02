@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { ArrowLeft, Shield, LogOut, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/AuthContext";
-import LeaderAccessForm from "@/components/role/LeaderAccessForm";
 
 const TIMEZONES = [
   { value: "Australia/Adelaide", label: "Australia/Adelaide — ACST/ACDT" },
@@ -32,58 +31,79 @@ export default function Settings() {
   const [timezone, setTimezone] = useState("Australia/Adelaide");
   const [leaderProfileId, setLeaderProfileId] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [showLeaderAccessForm, setShowLeaderAccessForm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      setUserName(user.display_name || user.full_name || "");
-      setDailyReminder(user.daily_reminder !== false);
+    if (!user) return;
+    setUserName(user.display_name || user.full_name || "");
+    setDailyReminder(user.daily_reminder !== false);
 
-      // Fetch leader name from their user record (for disciples)
-      const olId = user.oversight_leader_id;
-      if (olId) {
-        base44.entities.User.filter({ id: olId }).then((results) => {
-          const leader = results[0];
-          if (leader) {
-            setLeaderDisplayName(leader.display_name || leader.full_name || leader.email || "Unknown Leader");
-          } else {
-            setLeaderDisplayName("Not yet assigned to a group.");
+    // Fetch leader name
+    const olId = user.oversight_leader_id;
+    if (olId) {
+      supabase
+        .from('profiles')
+        .select('display_name, full_name, email')
+        .eq('id', olId)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setLeaderDisplayName(data.display_name || data.full_name || data.email || "Unknown Leader");
           }
         });
-      } else {
-        setLeaderDisplayName("Not yet assigned to a group.");
-      }
+    }
 
-      // Fetch admin's own OversightLeaderProfile for timezone
-      if (isAdmin) {
-        base44.entities.OversightLeaderProfile.filter({ user_id: user.id }).then((results) => {
-          if (results[0]) {
-            setLeaderProfileId(results[0].id);
-            setTimezone(results[0].timezone || "Australia/Adelaide");
+    // Fetch timezone for admins
+    if (isAdmin) {
+      supabase
+        .from('oversight_leader_profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .single()
+        .then(({ data }) => {
+          if (data) {
+            setLeaderProfileId(data.id);
+            setTimezone(data.timezone || "Australia/Adelaide");
           }
         });
-      }
     }
   }, [user?.id]);
 
   const handleSaveSettings = async () => {
     setSaving(true);
-    await base44.auth.updateMe({
-      display_name: userName,
-      daily_reminder: dailyReminder,
-    });
-    // Save timezone to OversightLeaderProfile for admins
+    await supabase
+      .from('profiles')
+      .update({ display_name: userName, daily_reminder: dailyReminder })
+      .eq('id', user.id);
+
     if (isAdmin) {
       if (leaderProfileId) {
-        await base44.entities.OversightLeaderProfile.update(leaderProfileId, { timezone });
+        await supabase
+          .from('oversight_leader_profiles')
+          .update({ timezone })
+          .eq('id', leaderProfileId);
       } else {
-        const created = await base44.entities.OversightLeaderProfile.create({ user_id: user.id, timezone });
-        setLeaderProfileId(created.id);
+        const { data } = await supabase
+          .from('oversight_leader_profiles')
+          .insert({ user_id: user.id, timezone })
+          .select()
+          .single();
+        if (data) setLeaderProfileId(data.id);
       }
     }
     setSaving(false);
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    await supabase.from('profiles').delete().eq('id', user.id);
+    await supabase.auth.signOut();
+    setDeleting(false);
   };
 
   return (
@@ -95,7 +115,6 @@ export default function Settings() {
         <h1 className="text-2xl font-bold">Settings</h1>
       </div>
 
-      {/* Profile */}
       <div className="bg-card rounded-2xl border border-border p-5 space-y-4">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Profile</h2>
         <div>
@@ -113,7 +132,7 @@ export default function Settings() {
             value={leaderDisplayName}
             disabled
             className="mt-1 border-0 cursor-default select-none"
-            style={{ background: "#F0F0F0", color: "#888", outline: "none", boxShadow: "none" }}
+            style={{ background: "#F0F0F0", color: "#888" }}
           />
         </div>
         {isAdmin && (
@@ -148,7 +167,6 @@ export default function Settings() {
         </Button>
       </div>
 
-      {/* Leader Access Request - only for Disciples without leader access */}
       {isDiscipleOnly && (
         <div className="bg-card rounded-2xl border border-border p-5 space-y-4">
           <div className="flex items-start gap-3">
@@ -162,22 +180,15 @@ export default function Settings() {
               </p>
             </div>
           </div>
-          <Button
-            onClick={() => setShowLeaderAccessForm(true)}
-            className="w-full bg-primary text-primary-foreground font-semibold"
-          >
-            Request Leader Access
-          </Button>
         </div>
       )}
 
-      {/* Account Actions */}
       <div className="bg-card rounded-2xl border border-border p-5 space-y-3">
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Account</h2>
         <Button
           variant="outline"
           className="w-full flex items-center gap-2 justify-start text-foreground"
-          onClick={() => base44.auth.logout()}
+          onClick={handleSignOut}
         >
           <LogOut className="w-4 h-4" />
           Sign Out
@@ -192,9 +203,6 @@ export default function Settings() {
         </Button>
       </div>
 
-      <LeaderAccessForm open={showLeaderAccessForm} onOpenChange={setShowLeaderAccessForm} />
-
-      {/* Delete Account Confirmation */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <DialogContent className="bg-card border-border max-w-sm">
           <DialogHeader>
@@ -211,11 +219,7 @@ export default function Settings() {
               variant="destructive"
               className="flex-1"
               disabled={deleting}
-              onClick={async () => {
-                setDeleting(true);
-                await base44.auth.deleteMe();
-                base44.auth.logout();
-              }}
+              onClick={handleDeleteAccount}
             >
               {deleting ? "Deleting..." : "Yes, Delete"}
             </Button>
