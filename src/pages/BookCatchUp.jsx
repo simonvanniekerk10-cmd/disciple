@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
 import { useGroupContext } from "@/components/hooks/useGroupContext";
 import { format } from "date-fns";
@@ -40,39 +40,54 @@ export default function BookCatchUp() {
   const { oversight_leader_id: olId, isLoading: olCheckLoading } = useGroupContext();
   const olCheckDone = !olCheckLoading;
 
-  // Fetch only the assigned OL's slots
   const { data: slots = [], isLoading } = useQuery({
     queryKey: ["catchupSlots", olId],
-    queryFn: () => base44.entities.CatchUpSlot.filter({ oversight_leader_id: olId }, "date", 200),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('catch_up_slots')
+        .select('*')
+        .eq('oversight_leader_id', olId)
+        .order('date', { ascending: true })
+        .limit(200);
+      return data || [];
+    },
     enabled: !!olId,
   });
 
-  // Fetch the leader's user record for their name
-  const { data: leaderUsers = [] } = useQuery({
-    queryKey: ["leaderUser", olId],
-    queryFn: () => base44.entities.User.filter({ id: olId }),
-    enabled: !!olId,
-  });
-  const olUserRecord = leaderUsers[0] || null;
-  const leaderName = olUserRecord?.full_name || "your Leader";
-
-  // Fetch the leader's OversightLeaderProfile for notification email
-  const { data: leaderProfiles = [] } = useQuery({
+  const { data: leaderProfile } = useQuery({
     queryKey: ["leaderProfile", olId],
-    queryFn: () => base44.entities.OversightLeaderProfile.filter({ user_id: olId }),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('oversight_leader_profiles')
+        .select('*')
+        .eq('user_id', olId)
+        .single();
+      return data;
+    },
     enabled: !!olId,
   });
-  const leaderProfile = leaderProfiles[0] || null;
+
+  const { data: leaderUser } = useQuery({
+    queryKey: ["leaderUser", olId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name, display_name')
+        .eq('id', olId)
+        .single();
+      return data;
+    },
+    enabled: !!olId,
+  });
+
+  const leaderName = leaderUser?.display_name || leaderUser?.full_name || "your Leader";
 
   const handleBook = async () => {
     if (!bookingSlot) return;
     setSaving(true);
-    const currentUser = await base44.auth.me();
-    const bookerName = currentUser?.full_name || "A Disciple";
+    const bookerName = user?.full_name || user?.display_name || "A Disciple";
     const type = duration === 30 ? "phone" : "in_person";
-    const typeLabel = duration === 30 ? "Phone Call (30 min)" : "In-Person Catch-Up (60 min)";
 
-    // Block all overlapping 30-min slots
     const startRaw = bookingSlot.time_raw || toRaw(bookingSlot.time);
     const slotsToBlock = [];
     let t = startRaw;
@@ -84,55 +99,55 @@ export default function BookCatchUp() {
       t = addMinutes(t, 30);
     }
 
-    // Mark the first slot as "booked" (pending confirmation) with booking details, delete the rest
-    await base44.entities.CatchUpSlot.update(bookingSlot.id, {
-      status: "booked",
-      confirmed: false,
-      type,
-      duration,
-      message: message.trim(),
-      booked_by: bookerName,
-      booked_by_user_id: currentUser.id,
-    });
+    await supabase
+      .from('catch_up_slots')
+      .update({
+        status: "booked",
+        confirmed: false,
+        type,
+        duration,
+        message: message.trim(),
+        booked_by: bookerName,
+        booked_by_user_id: user.id,
+      })
+      .eq('id', bookingSlot.id);
+
     for (const s of slotsToBlock) {
       if (s.id !== bookingSlot.id) {
-        await base44.entities.CatchUpSlot.delete(s.id);
+        await supabase.from('catch_up_slots').delete().eq('id', s.id);
       }
     }
 
-    // Invalidate immediately so the UI updates with the new booking
     queryClient.invalidateQueries({ queryKey: ["catchupSlots"] });
     setBookingSlot(null);
     setMessage("");
     setSaving(false);
-
-    // Leader email is sent automatically by the sendBookingNotification entity automation
   };
 
   const handleCancelPending = async (slot) => {
-    // Users can only cancel PENDING (unconfirmed) bookings
-    await base44.entities.CatchUpSlot.update(slot.id, {
-      status: 'available',
-      message: '',
-      booked_by: '',
-      booked_by_user_id: '',
-      type: null,
-      duration: null,
-      confirmed: false,
-      notification_sent: false,
-    });
+    await supabase
+      .from('catch_up_slots')
+      .update({
+        status: 'available',
+        message: '',
+        booked_by: '',
+        booked_by_user_id: null,
+        type: null,
+        duration: null,
+        confirmed: false,
+        notification_sent: false,
+      })
+      .eq('id', slot.id);
     queryClient.invalidateQueries({ queryKey: ['catchupSlots'] });
   };
 
-  // Filter to only the current user's booked slots that are upcoming (not past)
-  // Compare using the leader's timezone so an Aussie user doesn't see "past" slots due to UTC drift
   const timezone = leaderProfile?.timezone || "Australia/Adelaide";
   const nowInTz = new Date(new Date().toLocaleString("en-US", { timeZone: timezone }));
 
   const myBookedSlots = slots.filter((s) => {
     if (s.status !== "booked") return false;
-    if (s.booked_by_user_id !== user?.id && s.created_by !== user?.email) return false;
-    if (!s.date || !s.time) return true; // keep if no time info
+    if (s.booked_by_user_id !== user?.id) return false;
+    if (!s.date || !s.time) return true;
     const raw = s.time_raw || toRaw(s.time);
     if (!raw) return true;
     const [h, m] = raw.split(":").map(Number);
@@ -160,7 +175,7 @@ export default function BookCatchUp() {
           <AlertCircle className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-semibold">You're not linked to a Leader yet.</p>
-              <p className="text-xs text-muted-foreground mt-1">Ask your Leader to share their invite link with you to get connected.</p>
+            <p className="text-xs text-muted-foreground mt-1">Ask your Leader to share their invite link with you to get connected.</p>
           </div>
         </div>
       </div>
@@ -174,41 +189,30 @@ export default function BookCatchUp() {
         <p className="text-sm text-muted-foreground mt-1">Schedule time with your Leader</p>
       </div>
 
-      {/* Duration Selector */}
       <div className="bg-card rounded-2xl border border-border p-4 space-y-3">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Select Type</p>
         <div className="grid grid-cols-2 gap-3">
           <button
             onClick={() => setDuration(30)}
             className="rounded-xl p-4 border-2 text-left transition-all"
-            style={duration === 30
-              ? {borderColor:'#1E2D50', background:'#EEF3FB'}
-              : {borderColor:'#C8D8F0', background:'#F0F5FF'}}
+            style={duration === 30 ? {borderColor:'#1E2D50', background:'#EEF3FB'} : {borderColor:'#C8D8F0', background:'#F0F5FF'}}
           >
             <Phone className="w-5 h-5 mb-2" style={{color: duration === 30 ? '#1E2D50' : '#6B82AA'}} />
-            <p className="text-sm font-semibold" style={{color:'#1E2D50'}}>
-              Phone Call
-            </p>
+            <p className="text-sm font-semibold" style={{color:'#1E2D50'}}>Phone Call</p>
             <p className="text-xs" style={{color:'#6B82AA'}}>30 minutes</p>
           </button>
           <button
             onClick={() => setDuration(60)}
             className="rounded-xl p-4 border-2 text-left transition-all"
-            style={duration === 60
-              ? {borderColor:'#1E2D50', background:'#EEF3FB'}
-              : {borderColor:'#C8D8F0', background:'#F0F5FF'}}
+            style={duration === 60 ? {borderColor:'#1E2D50', background:'#EEF3FB'} : {borderColor:'#C8D8F0', background:'#F0F5FF'}}
           >
             <MapPin className="w-5 h-5 mb-2" style={{color: duration === 60 ? '#1E2D50' : '#6B82AA'}} />
-            <p className="text-sm font-semibold" style={{color:'#1E2D50'}}>
-              In-Person
-            </p>
+            <p className="text-sm font-semibold" style={{color:'#1E2D50'}}>In-Person</p>
             <p className="text-xs" style={{color:'#6B82AA'}}>60 minutes</p>
           </button>
         </div>
         <p className="text-xs text-muted-foreground">
-          {duration === 30
-            ? "Available slots show single open 30-min blocks."
-            : "Available slots show where two consecutive 30-min blocks are open."}
+          {duration === 30 ? "Available slots show single open 30-min blocks." : "Available slots show where two consecutive 30-min blocks are open."}
         </p>
       </div>
 
@@ -225,7 +229,6 @@ export default function BookCatchUp() {
         </>
       )}
 
-      {/* Confirm Dialog */}
       <Dialog open={!!bookingSlot} onOpenChange={() => setBookingSlot(null)}>
         <DialogContent className="bg-card border-border max-w-md">
           <DialogHeader>
@@ -239,15 +242,11 @@ export default function BookCatchUp() {
                   <span className="font-semibold">
                     {duration === 30 ? "30 minute phone call" : "60 minute in-person catch-up"}
                   </span>{" "}
-                  with{" "}
-                  <span className="font-semibold">{leaderName}</span> on{" "}
+                  with <span className="font-semibold">{leaderName}</span> on{" "}
                   <span className="font-semibold">
-                    {bookingSlot.date
-                      ? format(new Date(bookingSlot.date + "T00:00:00"), "EEEE, MMMM d")
-                      : ""}
+                    {bookingSlot.date ? format(new Date(bookingSlot.date + "T00:00:00"), "EEEE, MMMM d") : ""}
                   </span>{" "}
-                  at{" "}
-                  <span className="font-semibold">{bookingSlot.time}</span>
+                  at <span className="font-semibold">{bookingSlot.time}</span>
                   {leaderProfile?.timezone ? (
                     <span className="text-muted-foreground"> ({leaderProfile.timezone})</span>
                   ) : null}.
