@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import { supabase } from "@/lib/supabase";
 import { format } from "date-fns";
 import { Link } from "react-router-dom";
 import { History, Loader2 } from "lucide-react";
@@ -23,45 +23,52 @@ export default function Challenge() {
   const [saving, setSaving] = useState(false);
   const queryClient = useQueryClient();
   const currentPeriod = format(new Date(), "MMMM yyyy");
-
+  const { user } = useAuth();
   const { oversight_leader_id, isLoading: loadingCtx } = useGroupContext();
 
-  // Fetch the OL's challenge pool
   const { data: pool = [], isLoading: loadingPool } = useQuery({
     queryKey: ["groupChallenges", oversight_leader_id],
-    queryFn: () =>
-      base44.entities.GroupChallenge.filter(
-        { oversight_leader_id },
-        "sort_order",
-        200
-      ),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('group_challenges')
+        .select('*')
+        .eq('oversight_leader_id', oversight_leader_id)
+        .order('sort_order', { ascending: true })
+        .limit(200);
+      return data || [];
+    },
     enabled: !!oversight_leader_id,
   });
 
-  // Fetch group frequency setting
   const { data: groupSettings } = useQuery({
     queryKey: ["groupSettings", oversight_leader_id],
-    queryFn: () =>
-      base44.entities.GroupSettings.filter(
-        { oversight_leader_id },
-        "-created_date",
-        1
-      ),
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('group_settings')
+        .select('*')
+        .eq('oversight_leader_id', oversight_leader_id)
+        .single();
+      return data;
+    },
     enabled: !!oversight_leader_id,
-    select: (data) => data[0] || null,
+  });
+
+  const { data: selections = [] } = useQuery({
+    queryKey: ["challenges", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('challenge_selections')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      return data || [];
+    },
+    enabled: !!user?.id,
   });
 
   const frequency = groupSettings?.challenge_frequency || "monthly";
   const pageTitle = FREQ_LABELS[frequency] || "Challenges";
-
-  const { user } = useAuth();
-
-  // Fetch my selections — scoped to current user only
-  const { data: selections = [] } = useQuery({
-    queryKey: ["challenges", user?.email],
-    queryFn: () => base44.entities.ChallengeSelection.filter({ created_by: user.email }, "-created_date", 50),
-    enabled: !!user?.email,
-  });
 
   const activeChallenge = selections.find(
     (c) => c.status === "in_progress" || c.status === "not_started"
@@ -73,7 +80,6 @@ export default function Challenge() {
     selections.filter((c) => c.status === "completed").map((c) => c.challenge_title)
   );
 
-  // Count completions per category
   const categoryCounts = {};
   selections.filter((c) => c.status === "completed").forEach((c) => {
     categoryCounts[c.challenge_category] = (categoryCounts[c.challenge_category] || 0) + 1;
@@ -81,14 +87,15 @@ export default function Challenge() {
 
   const handleRemove = async () => {
     if (!activeChallenge) return;
-    await base44.entities.ChallengeSelection.delete(activeChallenge.id);
-    queryClient.invalidateQueries({ queryKey: ["challenges"] }); // prefix match catches ["challenges", email]
+    await supabase.from('challenge_selections').delete().eq('id', activeChallenge.id);
+    queryClient.invalidateQueries({ queryKey: ["challenges"] });
   };
 
   const handleSelect = async () => {
     if (!confirmChallenge) return;
     setSaving(true);
-    await base44.entities.ChallengeSelection.create({
+    await supabase.from('challenge_selections').insert({
+      user_id: user.id,
       challenge_source_id: confirmChallenge.id,
       challenge_number: confirmChallenge.default_number || null,
       challenge_title: confirmChallenge.title,
@@ -98,11 +105,10 @@ export default function Challenge() {
       oversight_leader_id,
     });
     setConfirmChallenge(null);
-    queryClient.invalidateQueries({ queryKey: ["challenges"] }); // prefix match catches ["challenges", email]
+    queryClient.invalidateQueries({ queryKey: ["challenges"] });
     setSaving(false);
   };
 
-  // Group pool by category
   const byCategory = {};
   pool.forEach((ch) => {
     const cat = ch.category || "Uncategorised";
@@ -157,9 +163,7 @@ export default function Challenge() {
         <div key={cat}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-bold uppercase tracking-wider">{cat}</h2>
-            <span className="text-xs text-muted-foreground">
-              {categoryCounts[cat] || 0} completed
-            </span>
+            <span className="text-xs text-muted-foreground">{categoryCounts[cat] || 0} completed</span>
           </div>
           <div className="grid grid-cols-1 gap-2">
             {challenges.map((ch) => {
@@ -171,13 +175,10 @@ export default function Challenge() {
                   onClick={() => !isCompleted && !activeChallenge && setConfirmChallenge(ch)}
                   disabled={isCompleted || !!activeChallenge}
                   className={`w-full text-left rounded-2xl p-4 border transition-all duration-200 ${
-                    isActive
-                      ? "bg-primary/10 border-primary/40"
-                      : isCompleted
-                      ? "bg-primary/5 border-primary/20 opacity-60"
-                      : activeChallenge
-                      ? "bg-card border-border opacity-40 cursor-not-allowed"
-                      : "bg-card border-border hover:border-primary/40 active:scale-[0.98]"
+                    isActive ? "bg-primary/10 border-primary/40"
+                    : isCompleted ? "bg-primary/5 border-primary/20 opacity-60"
+                    : activeChallenge ? "bg-card border-border opacity-40 cursor-not-allowed"
+                    : "bg-card border-border hover:border-primary/40 active:scale-[0.98]"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -186,16 +187,9 @@ export default function Challenge() {
                       {ch.description && (
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{ch.description}</p>
                       )}
-                      {ch.time_frame_override && ch.time_frame_override !== "group_default" && (
-                        <span className="inline-block mt-1.5 text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                          {ch.time_frame_override === "none" ? "No Time Frame" : ch.time_frame_override.charAt(0).toUpperCase() + ch.time_frame_override.slice(1)}
-                        </span>
-                      )}
                     </div>
                     {isCompleted && (
-                      <span className="text-[10px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full shrink-0">
-                        Done
-                      </span>
+                      <span className="text-[10px] bg-green-500/10 text-green-400 px-2 py-0.5 rounded-full shrink-0">Done</span>
                     )}
                   </div>
                 </button>
@@ -224,11 +218,7 @@ export default function Challenge() {
                   </div>
                 )}
               </div>
-              <Button
-                onClick={handleSelect}
-                disabled={saving}
-                className="w-full bg-primary text-primary-foreground font-semibold"
-              >
+              <Button onClick={handleSelect} disabled={saving} className="w-full bg-primary text-primary-foreground font-semibold">
                 {saving ? "Starting..." : "Start Challenge"}
               </Button>
             </div>
